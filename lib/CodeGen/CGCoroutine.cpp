@@ -758,3 +758,8 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
   }
   return RValue::get(Call);
 }
+
+RValue CodeGenFunction::EmitCoroutineFrameMaxSize(const CallExpr *E) {
+  auto NullPtr = llvm::Constant::getIntegerValue(Int64Ty, llvm::APInt(64, 0));
+  return RValue::get(NullPtr);
+}

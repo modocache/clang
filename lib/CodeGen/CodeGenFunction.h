@@ -2880,6 +2880,7 @@ public:
                          bool ignoreResult = false);
   LValue EmitCoyieldLValue(const CoyieldExpr *E);
   RValue EmitCoroutineIntrinsic(const CallExpr *E, unsigned int IID);
+  RValue EmitCoroutineFrameMaxSize(const CallExpr *E);
 
   void EnterCXXTryStmt(const CXXTryStmt &S, bool IsFnTryBlock = false);
   void ExitCXXTryStmt(const CXXTryStmt &S, bool IsFnTryBlock = false);
