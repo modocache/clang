@@ -760,6 +760,41 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
 }
 
 RValue CodeGenFunction::EmitCoroutineFrameMaxSize(const CallExpr *E) {
+  auto *FD = dyn_cast_or_null<FunctionDecl>(CurFuncDecl);
+  assert(FD && "TODO: Emit error if not used within a function.");
+  llvm::outs() << "Current function FD:\n";
+  FD->dump();
+  llvm::outs() << "\n";
+
+  auto *TAI = FD->getTemplateSpecializationArgs();
+  assert(TAI->size() == 1 &&
+         "TODO: Emit error if function doesn't have one template argument");
+
+  llvm::outs() << "TA.getAsType()->dump():\n";
+  auto TA = TAI->get(0);
+  llvm::outs() << "\nTA.getKind(): " << TA.getKind() << "\n"; // prints 1, TemplateArgument::ArgKind::Type
+  llvm::outs() << "\nTA.dump():\n";
+  // TA.dump();
+  llvm::outs() << "\nTA.getAsType()->dump():\n";
+  QualType TAQT = TA.getAsType();
+
+  // TAQT.dump();
+  llvm::outs() << "\nTAQT.getCanonicalType()->dump():\n";
+  // TAQT.getCanonicalType()->dump();
+
+  // TAQT.getTypePtr()->getAs<RecordType>()->dump();
+
+  llvm::outs() << "\nhuh?\n";
+  auto *CallDecl = TAQT.getTypePtr()->getAsCXXRecordDecl()->getLambdaCallOperator();
+  CallDecl->dump();
+  auto *Body = CallDecl->Body.get(getContext().getExternalSource());
+  
+
+  /*
+  llvm::outs() << "\nTA.getAsDecl()->dump():\n";
+  TA.getAsDecl()->dump();
+  */
+
   auto NullPtr = llvm::Constant::getIntegerValue(Int64Ty, llvm::APInt(64, 0));
   return RValue::get(NullPtr);
 }
