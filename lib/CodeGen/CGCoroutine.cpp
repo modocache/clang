@@ -14,6 +14,7 @@
 #include "CGCleanup.h"
 #include "CodeGenFunction.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtVisitor.h"
 
@@ -759,42 +760,68 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
   return RValue::get(Call);
 }
 
+static uint64_t getCoroutineMaxSizeV(ASTContext &Ctx, FunctionDecl *FD,
+                                     Stmt *Body) {
+  assert(isa<CoroutineBodyStmt>(Body) && "Not a coroutine body");
+
+  // Parameters to the coroutine spill across the initial suspend point
+  // and so may need to be stored in the coroutine frame.
+  uint64_t ParamSize = 0;
+  for (auto *PD : FD->parameters()) {
+    CharUnits Units = Ctx.getTypeSizeInChars(PD->getType());
+    ParamSize += Units.getQuantity();
+  }
+
+  // Traverses variable declarations and sums their size.
+  class VarSizeVisitor : public RecursiveASTVisitor<VarSizeVisitor> {
+    const ASTContext &Context;
+    uint64_t Size = 0;
+
+  public:
+    VarSizeVisitor(ASTContext &Context) : Context(Context) {}
+
+    uint64_t getSize() const { return Size; }
+
+    bool VisitVarDecl(VarDecl *VD) {
+      CharUnits Units = Context.getTypeSizeInChars(VD->getType());
+      Size += Units.getQuantity();
+      return true;
+    }
+  };
+
+  // Local and temporary variables may spill across suspend points
+  // and so may need to be stored in the coroutine frame.
+  VarSizeVisitor V(Ctx);
+  V.TraverseStmt(Body);
+  uint64_t VarSize = V.getSize();
+
+  // TODO: Add size of pointers, coroutine resume index, and other data we know
+  //       will be added by LLVM.
+
+  return ParamSize + VarSize;
+}
+
 RValue CodeGenFunction::EmitCoroutineFrameMaxSize(const CallExpr *E) {
   auto *FD = dyn_cast_or_null<FunctionDecl>(CurFuncDecl);
-  assert(FD && "TODO: Emit error if not used within a function.");
-  llvm::outs() << "Current function FD:\n";
-  FD->dump();
-  llvm::outs() << "\n";
+  assert(FD && "TODO: Emit error if not used within a function");
 
-  auto *TAI = FD->getTemplateSpecializationArgs();
-  assert(TAI->size() == 1 &&
+  const TemplateArgumentList *Args = FD->getTemplateSpecializationArgs();
+  assert(Args->size() == 1 &&
          "TODO: Emit error if function doesn't have one template argument");
 
-  llvm::outs() << "TA.getAsType()->dump():\n";
-  auto TA = TAI->get(0);
-  llvm::outs() << "\nTA.getKind(): " << TA.getKind() << "\n"; // prints 1, TemplateArgument::ArgKind::Type
-  llvm::outs() << "\nTA.dump():\n";
-  // TA.dump();
-  llvm::outs() << "\nTA.getAsType()->dump():\n";
-  QualType TAQT = TA.getAsType();
+  const TemplateArgument &Arg = Args->get(0);
+  assert(Arg.getKind() == TemplateArgument::ArgKind::Type &&
+         "TODO: Emit error if single template argument is not a type");
 
-  // TAQT.dump();
-  llvm::outs() << "\nTAQT.getCanonicalType()->dump():\n";
-  // TAQT.getCanonicalType()->dump();
+  const RecordType *RTy = cast<RecordType>(Arg.getAsType().getTypePtr());
+  CXXRecordDecl *RD = cast<CXXRecordDecl>(RTy->getDecl());
+  assert(RD->isLambda() && "TODO: error handling");
 
-  // TAQT.getTypePtr()->getAs<RecordType>()->dump();
+  CXXMethodDecl *MD = RD->getLambdaCallOperator();
+  assert(MD->doesThisDeclarationHaveABody() && "TODO: Error handling");
 
-  llvm::outs() << "\nhuh?\n";
-  auto *CallDecl = TAQT.getTypePtr()->getAsCXXRecordDecl()->getLambdaCallOperator();
-  CallDecl->dump();
-  auto *Body = CallDecl->Body.get(getContext().getExternalSource());
-  
-
-  /*
-  llvm::outs() << "\nTA.getAsDecl()->dump():\n";
-  TA.getAsDecl()->dump();
-  */
-
-  auto NullPtr = llvm::Constant::getIntegerValue(Int64Ty, llvm::APInt(64, 0));
-  return RValue::get(NullPtr);
+  size_t MaxSize = getCoroutineMaxSizeV(getContext(), MD, MD->getBody());
+  auto ReturnValue =
+      llvm::Constant::getIntegerValue(Int64Ty, llvm::APInt(64, MaxSize));
+  return RValue::get(ReturnValue);
 }

@@ -18,16 +18,12 @@
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/ExprCXX.h"
-#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Overload.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/SemaInternal.h"
-#include "llvm/Support/Debug.h"
-
-#define DEBUG_TYPE "coro-max-size"
 
 using namespace clang;
 using namespace sema;
@@ -934,45 +930,6 @@ static FunctionDecl *findDeleteForPromise(Sema &S, SourceLocation Loc,
   return OperatorDelete;
 }
 
-static uint64_t getCoroutineMaxSizeV(Sema &S, FunctionDecl *FD, Stmt *Body) {
-  assert(isa<CoroutineBodyStmt>(Body) && "Not a coroutine body");
-
-  // Parameters to the coroutine spill across the initial suspend point
-  // and so may need to be stored in the coroutine frame.
-  uint64_t ParamSize = 0;
-  for (auto *PD : FD->parameters()) {
-    CharUnits Units = S.getASTContext().getTypeSizeInChars(PD->getType());
-    ParamSize += Units.getQuantity();
-  }
-
-  // Traverses variable declarations and sums their size.
-  class VarSizeVisitor : public RecursiveASTVisitor<VarSizeVisitor> {
-    const ASTContext &Context;
-    uint64_t Size = 0;
-
-  public:
-    VarSizeVisitor(ASTContext &Context) : Context(Context) {}
-
-    uint64_t getSize() const { return Size; }
-
-    bool VisitVarDecl(VarDecl *VD) {
-      CharUnits Units = Context.getTypeSizeInChars(VD->getType());
-      Size += Units.getQuantity();
-      return true;
-    }
-  };
-
-  // Local and temporary variables may spill across suspend points
-  // and so may need to be stored in the coroutine frame.
-  VarSizeVisitor V(S.getASTContext());
-  V.TraverseStmt(Body);
-  uint64_t VarSize = V.getSize();
-
-  // TODO: Add size of pointers, coroutine resume index, and other data we know
-  //       will be added by LLVM.
-
-  return ParamSize + VarSize;
-}
 
 void Sema::CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body) {
   FunctionScopeInfo *Fn = getCurFunction();
@@ -1007,9 +964,6 @@ void Sema::CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body) {
 
   // Build body for the coroutine wrapper statement.
   Body = CoroutineBodyStmt::Create(Context, Builder);
-
-  LLVM_DEBUG(llvm::dbgs() << "Max size for '" << FD->getNameAsString() << "': "
-                          << getCoroutineMaxSizeV(*this, FD, Body) << "\n");
 }
 
 CoroutineStmtBuilder::CoroutineStmtBuilder(Sema &S, FunctionDecl &FD,
