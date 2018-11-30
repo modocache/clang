@@ -760,7 +760,8 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
   return RValue::get(Call);
 }
 
-static uint64_t getCoroutineMaxSizeV(ASTContext &Ctx, FunctionDecl *FD,
+static uint64_t getCoroutineMaxSizeV(ASTContext &Ctx, CGBuilderTy &Builder,
+                                     CodeGenModule &CGM, FunctionDecl *FD,
                                      Stmt *Body) {
   assert(isa<CoroutineBodyStmt>(Body) && "Not a coroutine body");
 
@@ -797,8 +798,30 @@ static uint64_t getCoroutineMaxSizeV(ASTContext &Ctx, FunctionDecl *FD,
 
   // TODO: Add size of pointers, coroutine resume index, and other data we know
   //       will be added by LLVM.
+  auto *CoroBody = cast<CoroutineBodyStmt>(Body);
+  auto *Promise = CoroBody->getPromiseDeclStmt();
+  auto PromiseType = cast<VarDecl>(cast<DeclStmt>(Promise)->getSingleDecl())->getType();
+  auto *GRO = CoroBody->getResultDecl();
 
-  return ParamSize + VarSize;
+
+  uint64_t IndexSize =
+      CGM.getDataLayout().getTypeAllocSize(Builder.getInt64Ty());
+  uint64_t SubFnSize = 2 * Ctx.getTypeSizeInChars(Ctx.VoidPtrTy).getQuantity();
+  uint64_t PromisePaddingSize = Ctx.getTypeAlignInChars(PromiseType).getQuantity();
+  uint64_t PromiseSize = Ctx.getTypeSizeInChars(PromiseType).getQuantity();
+  uint64_t TotalSize = ParamSize + VarSize + IndexSize + SubFnSize + PromisePaddingSize + PromiseSize;
+
+
+  llvm::outs() << "Function: " << FD->getNameAsString() << "\n";
+  llvm::outs() << "\tParamSize:          " << ParamSize << "\n";
+  llvm::outs() << "\tVarSize:            "   << VarSize << "\n";
+  llvm::outs() << "\tIndexSize:          " << IndexSize << "\n";
+  llvm::outs() << "\tSubFnSize:          " << SubFnSize << "\n";
+  llvm::outs() << "\tPromisePaddingSize: " << PromisePaddingSize << "\n";
+  llvm::outs() << "\tPromiseSize:        " << PromiseSize << "\n";
+  llvm::outs() << "\tTotalSize:          " << TotalSize << "\n";
+
+  return TotalSize;
 }
 
 RValue CodeGenFunction::EmitCoroutineFrameMaxSize(const CallExpr *E) {
@@ -820,7 +843,8 @@ RValue CodeGenFunction::EmitCoroutineFrameMaxSize(const CallExpr *E) {
   CXXMethodDecl *MD = RD->getLambdaCallOperator();
   assert(MD->doesThisDeclarationHaveABody() && "TODO: Error handling");
 
-  size_t MaxSize = getCoroutineMaxSizeV(getContext(), MD, MD->getBody());
+  size_t MaxSize =
+      getCoroutineMaxSizeV(getContext(), Builder, CGM, MD, MD->getBody());
   auto ReturnValue =
       llvm::Constant::getIntegerValue(Int64Ty, llvm::APInt(64, MaxSize));
   return RValue::get(ReturnValue);
